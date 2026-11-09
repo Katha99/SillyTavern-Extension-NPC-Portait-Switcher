@@ -6,16 +6,23 @@
  * Supports expression overrides: character keyword + expression keyword = expression portrait.
  */
 
+import { getUserAvatar, user_avatar } from '../../../personas.js';
+
 const MODULE_NAME = 'npc_portrait_switcher';
+const PERSONA_PANEL_ID = 'npc-ps-persona-panel';
+const STORAGE_VERSION = 2;
 const TRAY_MAX = 8; // max NPCs tracked at once
 
 const defaultSettings = Object.freeze({
     enabled: true,
+    personaEnabled: true,
     entries: [],
     stickyReplies: 0,
     caseSensitive: false,
     autoClose: true,
 });
+
+const inactiveSettings = structuredClone(defaultSettings);
 
 // ── Runtime state (cleared on chat change) ────────────────────────────────────
 
@@ -31,22 +38,133 @@ let pinnedEntryIdx = null;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function getSettings() {
-    const { extensionSettings } = SillyTavern.getContext();
-    if (!extensionSettings[MODULE_NAME]) {
-        extensionSettings[MODULE_NAME] = structuredClone(defaultSettings);
-    }
-    const stored = extensionSettings[MODULE_NAME];
+function applySettingDefaults(settings) {
     for (const key of Object.keys(defaultSettings)) {
-        if (stored[key] === undefined) {
-            stored[key] = structuredClone(defaultSettings[key]);
+        if (settings[key] === undefined) {
+            settings[key] = structuredClone(defaultSettings[key]);
         }
     }
-    return extensionSettings[MODULE_NAME];
+    return settings;
 }
 
-function saveSettings() {
-    SillyTavern.getContext().saveSettingsDebounced();
+function createSettings(source = {}) {
+    if (!source || typeof source !== 'object') source = {};
+    const settings = structuredClone(defaultSettings);
+    for (const key of Object.keys(defaultSettings)) {
+        if (source[key] !== undefined) settings[key] = structuredClone(source[key]);
+    }
+    return settings;
+}
+
+function getStorageRoot(context) {
+    const stored = context.extensionSettings[MODULE_NAME];
+    if (stored?.storageVersion === STORAGE_VERSION) return stored;
+
+    const root = {
+        storageVersion: STORAGE_VERSION,
+        legacySettings: createSettings(stored),
+        legacyClaimedBy: null,
+    };
+    context.extensionSettings[MODULE_NAME] = root;
+    context.saveSettingsDebounced();
+    return root;
+}
+
+function getChatScopeId(context) {
+    const owner = context.groupId
+        ? `group:${context.groupId}`
+        : `character:${context.characterId ?? 'unknown'}`;
+    return `${owner}:chat:${context.chatId}`;
+}
+
+function getSettings() {
+    const context = SillyTavern.getContext();
+    const storageRoot = getStorageRoot(context);
+    if (!context.chatId) return inactiveSettings;
+
+    let settings = context.chatMetadata[MODULE_NAME];
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+        const shouldMigrateLegacy = storageRoot.legacySettings && !storageRoot.legacyClaimedBy;
+        settings = shouldMigrateLegacy
+            ? createSettings(storageRoot.legacySettings)
+            : createSettings();
+        context.chatMetadata[MODULE_NAME] = settings;
+        context.saveMetadataDebounced();
+
+        if (shouldMigrateLegacy) {
+            storageRoot.legacyClaimedBy = getChatScopeId(context);
+            storageRoot.legacySettings = null;
+            context.saveSettingsDebounced();
+        }
+    }
+
+    return applySettingDefaults(settings);
+}
+
+function saveChatSettings() {
+    const context = SillyTavern.getContext();
+    if (context.chatId) context.saveMetadataDebounced();
+}
+
+// ── Persona portrait ─────────────────────────────────────────────────────────────────────────
+
+function hasOpenChat() {
+    return Boolean(SillyTavern.getContext().chatId);
+}
+
+function hidePersonaPortrait() {
+    const panel = document.getElementById(PERSONA_PANEL_ID);
+    if (!panel) return;
+
+    panel.classList.remove('has-image');
+    panel.setAttribute('aria-hidden', 'true');
+}
+
+function getOrCreatePersonaPanel() {
+    let panel = document.getElementById(PERSONA_PANEL_ID);
+    if (panel) return panel;
+
+    panel = document.createElement('div');
+    panel.id = PERSONA_PANEL_ID;
+    panel.className = 'npc-ps-side-portrait';
+    panel.setAttribute('aria-label', 'Active user persona portrait');
+    panel.setAttribute('aria-hidden', 'true');
+
+    const image = document.createElement('img');
+    image.alt = '';
+    image.decoding = 'async';
+    image.addEventListener('error', hidePersonaPortrait);
+    image.addEventListener('load', () => {
+        if (!getSettings().personaEnabled || !hasOpenChat() || image.naturalWidth === 0) return;
+        panel.classList.add('has-image');
+        panel.setAttribute('aria-hidden', 'false');
+    });
+
+    panel.appendChild(image);
+    document.body.appendChild(panel);
+    return panel;
+}
+
+function updatePersonaPortrait(forceReload = false) {
+    const settings = getSettings();
+    if (!settings.personaEnabled || !hasOpenChat() || !user_avatar) {
+        hidePersonaPortrait();
+        return;
+    }
+
+    const panel = getOrCreatePersonaPanel();
+    const image = panel.querySelector('img');
+    const avatarUrl = new URL(getUserAvatar(user_avatar), document.baseURI);
+
+    if (forceReload || image.dataset.avatar !== user_avatar) {
+        hidePersonaPortrait();
+        image.dataset.avatar = user_avatar;
+        if (forceReload) avatarUrl.searchParams.set('_npcPsRefresh', Date.now());
+        image.src = avatarUrl.href;
+    } else if (image.complete && image.naturalWidth > 0) {
+        panel.classList.add('has-image');
+        panel.setAttribute('aria-hidden', 'false');
+    }
 }
 
 // ── Crop / file helpers ───────────────────────────────────────────────────────
@@ -77,39 +195,22 @@ function splitKeywords(str) {
 
 function matchesAny(rawText, keywords, caseSensitive, triggerCount = 1) {
     let matchCount = 0;
-    const text = rawText;
-    
+    const text = String(rawText ?? '');
+    const haystack = caseSensitive ? text : text.toLocaleLowerCase();
+    const isWordChar = char => char !== '' && /[\p{L}\p{N}_]/u.test(char);
+
     for (const kw of keywords) {
         if (!kw) continue;
-        
-        const needle = caseSensitive ? kw : kw.toLowerCase();
-        const hay = caseSensitive ? text : text.toLowerCase();
-        
-        // Count all occurrences using indexOf in a loop
+
+        const needle = caseSensitive ? kw : kw.toLocaleLowerCase();
         let pos = -1;
-        let count = 0;
-        while ((pos = hay.indexOf(needle, pos + 1)) !== -1) {
-            count++;
-            // Check if it's a whole word using Unicode-aware regex
-            // \w matches letters, digits, and underscore
-            // Use Unicode property for proper word boundary detection
-            const beforeChar = pos > 0 ? hay[pos - 1] : '';
-            const afterChar = pos + needle.length < hay.length ? hay[pos + needle.length] : '';
-            
-            // Check if the character is a word character (letter, digit, underscore)
-            // Using \w which is Unicode-aware in modern JS
-            const isWordChar = (char) => /[\w]/.test(char);
-            
-            // Check if there's a word boundary
-            const isBeforeWordBoundary = beforeChar === '' || !isWordChar(beforeChar);
-            const isAfterWordBoundary = afterChar === '' || !isWordChar(afterChar);
-            
-            if (isBeforeWordBoundary && isAfterWordBoundary) {
+        while ((pos = haystack.indexOf(needle, pos + 1)) !== -1) {
+            const beforeChar = pos > 0 ? haystack[pos - 1] : '';
+            const afterChar = pos + needle.length < haystack.length ? haystack[pos + needle.length] : '';
+
+            if (!isWordChar(beforeChar) && !isWordChar(afterChar)) {
                 matchCount++;
-                if (matchCount >= triggerCount) {
-                    console.log(`[NPC Portrait Switcher] Found ${matchCount} occurrences of "${kw}" (need ${triggerCount})`);
-                    return true;
-                }
+                if (matchCount >= triggerCount) return true;
             }
         }
     }
@@ -146,10 +247,12 @@ function getOrCreatePanel() {
     // ── Close button ──
     const controlBar = document.createElement('div');
     controlBar.className = 'panelControlBar';
-    const closeBtn = document.createElement('div');
+    const closeBtn = document.createElement('button');
     closeBtn.id = 'npc-ps-close';
     closeBtn.className = 'dragClose';
+    closeBtn.type = 'button';
     closeBtn.title = 'Close portrait';
+    closeBtn.setAttribute('aria-label', 'Close portrait');
     closeBtn.innerHTML = '✕';
     closeBtn.addEventListener('click', () => clearAllPortraits());
     controlBar.appendChild(closeBtn);
@@ -213,8 +316,9 @@ function rebuildTray() {
         const entry = settings.entries[entryIdx];
         if (!entry) continue;
 
-        const icon = document.createElement('div');
+        const icon = document.createElement('button');
         icon.className = 'npc-ps-tray-icon';
+        icon.type = 'button';
         icon.dataset.entryIdx = String(entryIdx);
         icon.title = entry.label || splitKeywords(entry.keyword)[0] || 'NPC';
         if (entryIdx === activeEntryIdx) icon.classList.add('active');
@@ -318,6 +422,22 @@ function clearAllPortraits() {
     const panel = document.getElementById('npc-ps-portrait-panel');
     if (panel) panel.classList.remove('visible');
     rebuildTray();
+}
+
+function restorePortraitsFromLatestAssistantMessage() {
+    clearAllPortraits();
+
+    const settings = getSettings();
+    if (!settings.enabled) return;
+
+    const { chat } = SillyTavern.getContext();
+    for (let index = chat.length - 1; index >= 0; index--) {
+        const message = chat[index];
+        if (!message || message.is_user) continue;
+
+        scanAndDisplay(message.mes ?? '');
+        return;
+    }
 }
 
 // ── Scanning ──────────────────────────────────────────────────────────────────
@@ -463,17 +583,26 @@ function scanAndDisplay(messageText) {
 
 function buildSettingsHTML() {
     return `
-<div id="npc-portrait-panel" style="margin-bottom:10px;">
-  <div id="npc-portrait-header" class="npc-ps-header">
+<div id="npc-portrait-panel" class="inline-drawer">
+  <div id="npc-portrait-header" class="inline-drawer-toggle inline-drawer-header">
     <b>NPC Portrait Switcher</b>
-    <span id="npc-portrait-chevron" class="npc-ps-chevron">▼</span>
+    <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
   </div>
-  <div id="npc-portrait-body" class="npc-ps-body" style="display:none;">
+  <div id="npc-portrait-body" class="inline-drawer-content npc-ps-body">
+
+    <div id="npc_ps_scope_note" class="npc-ps-scope-note"></div>
 
     <div class="npc-ps-row">
       <label class="npc-ps-label">
         <input type="checkbox" id="npc_ps_enabled" />
-        Enabled
+        Show NPC portraits
+      </label>
+    </div>
+
+    <div class="npc-ps-row">
+      <label class="npc-ps-label">
+        <input type="checkbox" id="npc_ps_persona_enabled" />
+        Show active user persona portrait
       </label>
     </div>
 
@@ -541,11 +670,11 @@ function renderExpressionRow(expr, exprIdx, entryIdx, settings) {
 
     row.querySelector('.npc-ps-expr-keyword').addEventListener('input', e => {
         settings.entries[entryIdx].expressions[exprIdx].keyword = e.target.value;
-        saveSettings();
+        saveChatSettings();
     });
     row.querySelector('.npc-ps-expr-label').addEventListener('input', e => {
         settings.entries[entryIdx].expressions[exprIdx].label = e.target.value;
-        saveSettings();
+        saveChatSettings();
     });
     row.querySelector('input[type="file"]').addEventListener('change', async e => {
         const file = e.target.files[0];
@@ -554,7 +683,7 @@ function renderExpressionRow(expr, exprIdx, entryIdx, settings) {
         const cropped = await cropImage(dataUrl);
         if (!cropped) return;
         settings.entries[entryIdx].expressions[exprIdx].imageData = cropped;
-        saveSettings();
+        saveChatSettings();
         renderEntries();
     });
     return row;
@@ -608,15 +737,15 @@ function renderEntries() {
 
         headerRow.querySelector('.npc-ps-keyword').addEventListener('input', e => {
             settings.entries[idx].keyword = e.target.value;
-            saveSettings();
+            saveChatSettings();
         });
         headerRow.querySelector('.npc-ps-label-field').addEventListener('input', e => {
             settings.entries[idx].label = e.target.value;
-            saveSettings();
+            saveChatSettings();
         });
         headerRow.querySelector('.npc-ps-mention-count').addEventListener('change', e => {
             settings.entries[idx].mentionsBeforeTrigger = Math.max(1, parseInt(e.target.value) || 1);
-            saveSettings();
+            saveChatSettings();
         });
         headerRow.querySelector('input[type="file"]').addEventListener('change', async e => {
             const file = e.target.files[0];
@@ -625,7 +754,7 @@ function renderEntries() {
             const cropped = await cropImage(dataUrl);
             if (!cropped) return;
             settings.entries[idx].imageData = cropped;
-            saveSettings();
+            saveChatSettings();
             renderEntries();
         });
         card.appendChild(headerRow);
@@ -676,43 +805,55 @@ function initSettingsUI() {
     const settings = getSettings();
     document.getElementById('npc-portrait-panel')?.remove();
 
-    const panel = document.createElement('div');
-    panel.innerHTML = buildSettingsHTML();
     const target = document.getElementById('extensions_settings2') ?? document.getElementById('extensions_settings');
     if (!target) { console.warn('[NPC Portrait Switcher] Could not find extensions settings container.'); return; }
-    target.appendChild(panel);
+    target.insertAdjacentHTML('beforeend', buildSettingsHTML());
 
-    const header = document.getElementById('npc-portrait-header');
-    const body   = document.getElementById('npc-portrait-body');
-    const chev   = document.getElementById('npc-portrait-chevron');
-    header.addEventListener('click', () => {
-        const open = body.style.display !== 'none';
-        body.style.display = open ? 'none' : 'block';
-        chev.textContent = open ? '▼' : '▲';
-    });
+    const hasChat = hasOpenChat();
+    const scopeNote = document.getElementById('npc_ps_scope_note');
+    scopeNote.textContent = hasChat
+        ? 'These settings apply only to the current chat.'
+        : 'Open a chat to configure its portrait settings.';
+
+    if (!hasChat) {
+        document.querySelectorAll('#npc-portrait-body input, #npc-portrait-body button')
+            .forEach(element => element.disabled = true);
+    }
 
     const enabledCb = document.getElementById('npc_ps_enabled');
     enabledCb.checked = settings.enabled;
     enabledCb.addEventListener('change', e => {
         settings.enabled = e.target.checked;
-        saveSettings();
-        if (!settings.enabled) clearAllPortraits();
+        saveChatSettings();
+        if (settings.enabled) {
+            restorePortraitsFromLatestAssistantMessage();
+        } else {
+            clearAllPortraits();
+        }
+    });
+
+    const personaEnabledCb = document.getElementById('npc_ps_persona_enabled');
+    personaEnabledCb.checked = settings.personaEnabled;
+    personaEnabledCb.addEventListener('change', e => {
+        settings.personaEnabled = e.target.checked;
+        saveChatSettings();
+        updatePersonaPortrait();
     });
 
     const autocloseCb = document.getElementById('npc_ps_autoclose');
     autocloseCb.checked = settings.autoClose;
-    autocloseCb.addEventListener('change', e => { settings.autoClose = e.target.checked; saveSettings(); });
+    autocloseCb.addEventListener('change', e => { settings.autoClose = e.target.checked; saveChatSettings(); });
 
     const stickyInput = document.getElementById('npc_ps_sticky');
     stickyInput.value = settings.stickyReplies;
     stickyInput.addEventListener('change', e => {
         settings.stickyReplies = Math.max(0, parseInt(e.target.value) || 0);
-        saveSettings();
+        saveChatSettings();
     });
 
     const caseCb = document.getElementById('npc_ps_case');
     caseCb.checked = settings.caseSensitive;
-    caseCb.addEventListener('change', e => { settings.caseSensitive = e.target.checked; saveSettings(); });
+    caseCb.addEventListener('change', e => { settings.caseSensitive = e.target.checked; saveChatSettings(); });
 
     getOrCreatePanel();
     renderEntries();
@@ -724,7 +865,7 @@ document.addEventListener('click', e => {
     if (e.target.closest('#npc_ps_add')) {
         const settings = getSettings();
         settings.entries.push({ keyword: '', imageData: '', label: '', expressions: [], mentionsBeforeTrigger: 1 });
-        saveSettings(); renderEntries(); return;
+        saveChatSettings(); renderEntries(); return;
     }
     const deleteBtn = e.target.closest('.npc-ps-delete');
     if (deleteBtn) {
@@ -732,7 +873,8 @@ document.addEventListener('click', e => {
         if (row) {
             const settings = getSettings();
             settings.entries.splice(parseInt(row.dataset.index), 1);
-            saveSettings(); renderEntries();
+            clearAllPortraits();
+            saveChatSettings(); renderEntries();
         }
         return;
     }
@@ -742,7 +884,7 @@ document.addEventListener('click', e => {
         const settings = getSettings();
         if (!Array.isArray(settings.entries[entryIdx].expressions)) settings.entries[entryIdx].expressions = [];
         settings.entries[entryIdx].expressions.push({ keyword: '', imageData: '', label: '' });
-        saveSettings(); renderEntries(); return;
+        saveChatSettings(); renderEntries(); return;
     }
     const deleteExprBtn = e.target.closest('.npc-ps-expr-delete');
     if (deleteExprBtn) {
@@ -750,7 +892,7 @@ document.addEventListener('click', e => {
         if (row) {
             const settings = getSettings();
             settings.entries[parseInt(row.dataset.entryIndex)].expressions.splice(parseInt(row.dataset.exprIndex), 1);
-            saveSettings(); renderEntries();
+            saveChatSettings(); renderEntries();
         }
         return;
     }
@@ -763,8 +905,16 @@ document.addEventListener('click', e => {
 
     eventSource.on(event_types.APP_READY, () => {
         initSettingsUI();
+        updatePersonaPortrait();
+        restorePortraitsFromLatestAssistantMessage();
         console.log('[NPC Portrait Switcher] Loaded.');
     });
+
+    eventSource.on(event_types.PERSONA_CHANGED, () => updatePersonaPortrait());
+    eventSource.on(event_types.PERSONA_UPDATED, avatarId => {
+        if (avatarId === user_avatar) updatePersonaPortrait(true);
+    });
+    eventSource.on(event_types.CHAT_CREATED, () => updatePersonaPortrait());
 
     eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, (messageId) => {
         const settings = getSettings();
@@ -776,6 +926,8 @@ document.addEventListener('click', e => {
     });
 
     eventSource.on(event_types.CHAT_CHANGED, () => {
-        clearAllPortraits();
+        initSettingsUI();
+        restorePortraitsFromLatestAssistantMessage();
+        updatePersonaPortrait();
     });
 })();

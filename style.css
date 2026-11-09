@@ -1,29 +1,36 @@
-/* ── NPC Portrait Switcher — settings panel ── */
+/* ── NPC Portrait Switcher — SillyTavern theme integration ── */
 
-/* Match ST's native inline-drawer-header style exactly */
-.npc-ps-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 2px 5px;
-    cursor: pointer;
-    border-radius: 10px;
-    background-image: linear-gradient(348deg, var(--white30a) 2%, var(--grey30a) 10%, var(--black70a) 95%, var(--SmartThemeQuoteColor) 100%);
-    border: 1px solid var(--SmartThemeBorderColor);
-    margin-bottom: 5px;
-    user-select: none;
-    transition: filter 250ms ease;
+:root {
+    --npc-ps-accent: var(--SmartThemeQuoteColor);
+    --npc-ps-background: var(--SmartThemeBlurTintColor);
+    --npc-ps-border: var(--SmartThemeBorderColor);
+    --npc-ps-muted: var(--SmartThemeEmColor);
+    --npc-ps-shadow: var(--SmartThemeShadowColor);
+    --npc-ps-text: var(--SmartThemeBodyColor);
+    --npc-ps-border-soft: color-mix(in srgb, var(--npc-ps-border) 45%, transparent);
+    --npc-ps-surface-soft: color-mix(in srgb, var(--npc-ps-background) 75%, transparent);
+    --npc-ps-portrait-gap: 12px;
+    --npc-ps-portrait-bottom: 24px;
+    --npc-ps-portrait-width: min(
+        16.667vw,
+        46.667dvh,
+        calc((100vw - var(--sheldWidth, 38vw)) / 2 - 24px)
+    );
+    --npc-ps-portrait-height: calc(var(--npc-ps-portrait-width) * 1.5);
+    --npc-ps-portrait-side: calc(
+        (100vw - var(--sheldWidth, 38vw)) / 2
+        - var(--npc-ps-portrait-width)
+        - var(--npc-ps-portrait-gap)
+    );
 }
-.npc-ps-header:hover { filter: brightness(150%); }
-.npc-ps-chevron { font-size: 11px; opacity: 0.7; }
 
-/* Match ST's inline-drawer-content style */
-.npc-ps-body {
-    padding: 5px;
-    border: 1px solid var(--SmartThemeBorderColor);
-    border-radius: 10px;
-    background-color: var(--black30a);
-    margin-bottom: 5px;
+/* The settings drawer deliberately uses SillyTavern's native
+   inline-drawer classes so installed themes can style it directly. */
+
+.npc-ps-scope-note {
+    margin: 4px 0 10px;
+    color: var(--npc-ps-muted);
+    font-size: 0.85em;
 }
 
 .npc-ps-entry-row {
@@ -31,7 +38,7 @@
     align-items: center;
     gap: 8px;
     padding: 8px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.07);
+    border-bottom: 1px solid var(--npc-ps-border-soft);
 }
 .npc-ps-entry-fields {
     display: flex;
@@ -47,16 +54,16 @@
     width: 52px; height: 52px;
     object-fit: cover;
     border-radius: 6px;
-    border: 1px solid rgba(255,255,255,0.15);
+    border: 1px solid var(--npc-ps-border-soft);
 }
 .npc-ps-thumb-empty {
     width: 52px; height: 52px;
     display: flex; align-items: center; justify-content: center;
-    background: rgba(255,255,255,0.04);
-    color: rgba(255,255,255,0.25);
+    background: var(--npc-ps-surface-soft);
+    color: var(--npc-ps-muted);
     font-size: 20px;
     border-radius: 6px;
-    border: 1px dashed rgba(255,255,255,0.18);
+    border: 1px dashed var(--npc-ps-border);
 }
 
 .npc-ps-delete { padding: 4px 8px !important; flex-shrink: 0; opacity: 0.55; }
@@ -133,8 +140,8 @@
     font-size: calc(15px * 1.3);
     opacity: 0.5;
     transition: all 250ms ease;
-    filter: drop-shadow(0px 0px 2px black);
-    color: var(--SmartThemeBodyColor, #dcdcd2);
+    filter: drop-shadow(0 0 2px var(--npc-ps-shadow));
+    color: var(--npc-ps-text);
     cursor: pointer;
     background: none;
     border: none;
@@ -161,7 +168,7 @@
 /* ── NPC entry card (wraps header row + expressions) ── */
 
 .npc-ps-entry-card {
-    border: 1px solid rgba(255,255,255,0.08);
+    border: 1px solid var(--npc-ps-border-soft);
     border-radius: 8px;
     margin-bottom: 10px;
     overflow: hidden;
@@ -170,13 +177,13 @@
 .npc-ps-entry-card .npc-ps-entry-row {
     border-bottom: none;
     padding: 8px;
-    background: rgba(255,255,255,0.03);
+    background: var(--npc-ps-surface-soft);
 }
 
 /* ── Expressions section ── */
 
 .npc-ps-expr-section {
-    border-top: 1px solid rgba(255,255,255,0.07);
+    border-top: 1px solid var(--npc-ps-border-soft);
 }
 
 .npc-ps-expr-toggle {
@@ -188,7 +195,7 @@
     font-size: 0.85em;
     opacity: 0.75;
     user-select: none;
-    background: rgba(255,255,255,0.02);
+    background: var(--npc-ps-surface-soft);
     transition: opacity 0.15s ease;
 }
 .npc-ps-expr-toggle:hover { opacity: 1; }
@@ -216,7 +223,7 @@
 
 .npc-ps-expr-list {
     padding: 4px 8px 8px 8px;
-    background: rgba(0,0,0,0.15);
+    background: var(--npc-ps-surface-soft);
 }
 
 .npc-ps-expr-row {
@@ -224,7 +231,7 @@
     align-items: center;
     gap: 8px;
     padding: 6px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
+    border-bottom: 1px solid var(--npc-ps-border-soft);
 }
 .npc-ps-expr-row:last-child { border-bottom: none; }
 
@@ -264,10 +271,10 @@
 
 #npc-ps-prev,
 #npc-ps-next {
-    background: rgba(0,0,0,0.55);
-    border: none;
+    background: var(--npc-ps-background);
+    border: 1px solid var(--npc-ps-border);
     border-radius: 50%;
-    color: #fff;
+    color: var(--npc-ps-text);
     font-size: 22px;
     line-height: 1;
     width: 32px;
@@ -278,7 +285,7 @@
     justify-content: center;
     opacity: 0.7;
     transition: opacity 0.15s ease, transform 0.1s ease;
-    filter: drop-shadow(0 1px 3px rgba(0,0,0,0.8));
+    filter: drop-shadow(0 1px 3px var(--npc-ps-shadow));
     flex-shrink: 0;
 }
 
@@ -290,11 +297,12 @@
 
 #npc-ps-nav-label {
     font-size: 0.78em;
-    color: #fff;
-    background: rgba(0,0,0,0.45);
+    color: var(--npc-ps-text);
+    background: var(--npc-ps-background);
+    border: 1px solid var(--npc-ps-border);
     border-radius: 10px;
     padding: 2px 8px;
-    filter: drop-shadow(0 1px 3px rgba(0,0,0,0.8));
+    filter: drop-shadow(0 1px 3px var(--npc-ps-shadow));
     white-space: nowrap;
 }
 
@@ -318,24 +326,26 @@
     border-radius: 50%;
     overflow: hidden;
     cursor: pointer;
-    border: 2px solid rgba(255,255,255,0.2);
+    border: 2px solid var(--npc-ps-border);
+    padding: 0;
+    background: var(--npc-ps-background);
     transition: border-color 0.2s ease, transform 0.15s ease, opacity 0.2s ease;
     opacity: 0.6;
     flex-shrink: 0;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.6);
+    box-shadow: 0 2px 6px var(--npc-ps-shadow);
 }
 
 .npc-ps-tray-icon:hover {
     opacity: 1;
     transform: scale(1.1);
-    border-color: rgba(255,255,255,0.6);
+    border-color: var(--npc-ps-muted);
 }
 
-/* Active NPC gets a bright ring — matches ST's is_active outline colour */
+/* Active NPC uses the current theme accent. */
 .npc-ps-tray-icon.active {
     opacity: 1;
-    border-color: rgb(88, 182, 0);
-    box-shadow: 0 0 8px rgba(88, 182, 0, 0.6);
+    border-color: var(--npc-ps-accent);
+    box-shadow: 0 0 8px var(--npc-ps-accent);
 }
 
 .npc-ps-tray-icon img {
@@ -345,4 +355,74 @@
     object-position: top center;
     display: block;
     pointer-events: none;
+}
+
+/* ── Symmetric persona and NPC portraits ── */
+
+#npc-ps-persona-panel {
+    display: none;
+}
+
+@media screen and (max-width: 1199px) {
+    #npc-ps-portrait-panel {
+        display: none !important;
+    }
+}
+
+@media screen and (min-width: 1200px) {
+    #npc-ps-persona-panel.has-image,
+    #npc-ps-portrait-panel.visible {
+        position: fixed;
+        bottom: var(--npc-ps-portrait-bottom);
+        width: var(--npc-ps-portrait-width);
+        height: var(--npc-ps-portrait-height);
+        max-width: none;
+        max-height: none !important;
+        box-sizing: border-box;
+        border: 1px solid var(--npc-ps-border);
+        border-radius: 16px;
+        background: var(--npc-ps-background);
+        box-shadow: 0 10px 32px var(--npc-ps-shadow);
+        overflow: hidden;
+        z-index: 29;
+    }
+
+    #npc-ps-persona-panel.has-image {
+        display: block;
+        left: var(--npc-ps-portrait-side);
+        pointer-events: none;
+    }
+
+    #npc-ps-persona-panel img,
+    #npc-ps-portrait-img {
+        display: block;
+        width: 100% !important;
+        height: 100% !important;
+        object-fit: cover !important;
+        object-position: center 30%;
+        border-radius: 0;
+    }
+
+    #npc-ps-portrait-panel.visible {
+        right: var(--npc-ps-portrait-side);
+        left: auto;
+        padding: 0;
+        overflow: visible;
+    }
+
+    #npc-ps-portrait-container {
+        width: 100%;
+        height: 100%;
+        max-width: none;
+        max-height: none;
+        overflow: hidden;
+        border-radius: 15px;
+    }
+
+    #npc-ps-tray {
+        position: absolute;
+        right: 0;
+        bottom: calc(100% + 6px);
+        left: 0;
+    }
 }
